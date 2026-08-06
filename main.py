@@ -94,8 +94,11 @@ class ArbitrageScanner:
 
             all_opps = cross_opps + tri_opps + multi_opps
 
+            logger.warning(f"cross={len(cross_opps)} tri={len(tri_opps)} multi={len(multi_opps)} all={len(all_opps)}")
+
             # Rank and filter
             ranked = self.ranker.get_top_opportunities(all_opps, n=100)
+            print("RANKED =", len(ranked))
 
             # Detect changes
             new, updated, disappeared = self.detector.detect_changes(ranked)

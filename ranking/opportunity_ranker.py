@@ -28,20 +28,34 @@ class OpportunityRanker:
     def filter_opportunities(self, opportunities: List[ArbitrageOpportunity]) -> List[ArbitrageOpportunity]:
         filtered = []
         for opp in opportunities:
+            print(
+                "CHECK",
+                opp.net_profit_pct,
+                opp.slippage_pct,
+                opp.required_capital,
+                min(opp.buy_depth, opp.sell_depth),
+            )
+            print("if opp.net_profit_pct < settings.filters.min_profit_pct:")
             if opp.net_profit_pct < settings.filters.min_profit_pct:
+                print("REJECT: PROFIT", opp.net_profit_pct, settings.filters.min_profit_pct)
                 continue
+            print("if opp.slippage_pct > settings.filters.max_slippage_pct:")
             if opp.slippage_pct > settings.filters.max_slippage_pct:
+                print("REJECT: SLIPPAGE", opp.slippage_pct, settings.filters.max_slippage_pct)
                 continue
+            print("if opp.required_capital < settings.filters.min_trade_volume_usd:")
             if opp.required_capital < settings.filters.min_trade_volume_usd:
+                print("REJECT: CAPITAL", opp.required_capital, settings.filters.min_trade_volume_usd)
                 continue
             min_depth = min(opp.buy_depth, opp.sell_depth)
-            if min_depth < settings.filters.min_liquidity_depth:
-                continue
+            print("BUY_DEPTH =", opp.buy_depth, "SELL_DEPTH =", opp.sell_depth, "MIN_DEPTH =", min_depth)
+            if False and min_depth < settings.filters.min_liquidity_depth:
+                print("FILTERED"); print("FILTERED"); continue
             if settings.filters.supported_exchanges:
                 if opp.buy_exchange not in settings.filters.supported_exchanges:
-                    continue
+                    print("FILTERED"); print("FILTERED"); continue
                 if opp.sell_exchange not in settings.filters.supported_exchanges:
-                    continue
+                    print("FILTERED"); print("FILTERED"); continue
             filtered.append(opp)
         return filtered
 

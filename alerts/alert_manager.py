@@ -87,7 +87,7 @@ class AlertManager:
         return (
             f"[{emoji}] Arbitrage: {event.event_type.upper()}\n"
             f"Pair: {opp.symbol}\n"
-            f"Type: {opp.type.replace(\'_\', \' \').title()}\n"
+            f"Type: {opp.type.replace('_', ' ').title()}\n"
             f"Buy: {opp.buy_exchange} @ ${opp.buy_price:,.2f}\n"
             f"Sell: {opp.sell_exchange} @ ${opp.sell_price:,.2f}\n"
             f"Spread: {opp.spread_pct:.3f}%\n"
@@ -127,7 +127,7 @@ class AlertManager:
             from email.mime.text import MIMEText
 
             msg = MIMEText(message)
-            msg["Subject"] = f"Arbitrage Alert - {datetime.utcnow().strftime(\'%Y-%m-%d %H:%M:%S\')}"
+            msg["Subject"] = f"Arbitrage Alert - {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}"
             msg["From"] = self.config.email_username
             msg["To"] = ", ".join(self.config.email_recipients)
 

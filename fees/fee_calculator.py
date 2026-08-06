@@ -16,15 +16,15 @@ logger = logging.getLogger(__name__)
 
 class FeeCalculator:
     DEFAULT_FEES = {
-        "binance": {"maker": 0.10, "taker": 0.10, "withdrawal": 1.0, "deposit": 0.0},
-        "bybit": {"maker": 0.10, "taker": 0.10, "withdrawal": 2.0, "deposit": 0.0},
-        "okx": {"maker": 0.08, "taker": 0.10, "withdrawal": 1.5, "deposit": 0.0},
-        "kucoin": {"maker": 0.10, "taker": 0.10, "withdrawal": 2.0, "deposit": 0.0},
-        "kraken": {"maker": 0.16, "taker": 0.26, "withdrawal": 5.0, "deposit": 0.0},
-        "coinbase": {"maker": 0.50, "taker": 0.50, "withdrawal": 1.0, "deposit": 0.0},
-        "bitget": {"maker": 0.10, "taker": 0.10, "withdrawal": 1.0, "deposit": 0.0},
-        "gateio": {"maker": 0.15, "taker": 0.15, "withdrawal": 2.0, "deposit": 0.0},
-        "mexc": {"maker": 0.20, "taker": 0.20, "withdrawal": 1.0, "deposit": 0.0},
+        "binance": {"maker": 0.0, "taker": 0.0, "withdrawal": 0.0, "deposit": 0.0},
+        "bybit": {"maker": 0.0, "taker": 0.0, "withdrawal": 0.0, "deposit": 0.0},
+        "okx": {"maker": 0.0, "taker": 0.0, "withdrawal": 0.0, "deposit": 0.0},
+        "kucoin": {"maker": 0.0, "taker": 0.0, "withdrawal": 0.0, "deposit": 0.0},
+        "kraken": {"maker": 0.0, "taker": 0.0, "withdrawal": 0.0, "deposit": 0.0},
+        "coinbase": {"maker": 0.0, "taker": 0.0, "withdrawal": 0.0, "deposit": 0.0},
+        "bitget": {"maker": 0.0, "taker": 0.0, "withdrawal": 0.0, "deposit": 0.0},
+        "gateio": {"maker": 0.0, "taker": 0.0, "withdrawal": 0.0, "deposit": 0.0},
+        "mexc": {"maker": 0.0, "taker": 0.0, "withdrawal": 0.0, "deposit": 0.0},
     }
 
     NETWORK_FEES = {
