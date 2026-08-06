@@ -1,0 +1,25 @@
+# Core
+ccxt>=4.2.0
+aiohttp>=3.9.0
+asyncio-mqtt>=0.16.0
+
+# Web Dashboard
+flask>=3.0.0
+flask-sse>=1.0.0
+gunicorn>=21.2.0
+
+# Data & Computation
+numpy>=1.26.0
+pandas>=2.1.0
+networkx>=3.2.0
+
+# Alerts
+python-telegram-bot>=20.7
+plyer>=2.1.0
+aiosmtplib>=3.0.0
+
+# Utilities
+python-dotenv>=1.0.0
+pyyaml>=6.0.1
+tenacity>=8.2.0
+colorlog>=6.8.0

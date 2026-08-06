@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Crypto Arbitrage Scanner</title>
+    <style>
+        :root {
+            --bg: #0a0e17;
+            --card: #111827;
+            --card-hover: #1a2332;
+            --border: #1f2937;
+            --text: #f3f4f6;
+            --text-dim: #9ca3af;
+            --text-dark: #6b7280;
+            --green: #10b981;
+            --red: #ef4444;
+            --yellow: #f59e0b;
+            --blue: #3b82f6;
+            --purple: #8b5cf6;
+            --cyan: #06b6d4;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.6;
+        }
+        .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
+        header {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 20px 0; border-bottom: 1px solid var(--border); margin-bottom: 20px;
+        }
+        h1 { color: var(--blue); font-size: 1.8rem; }
+        .status-indicator { display: flex; align-items: center; gap: 8px; font-size: 0.9rem; }
+        .pulse {
+            width: 10px; height: 10px; background: var(--green);
+            border-radius: 50%; animation: pulse 2s infinite;
+        }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+        .stats-grid {
+            display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px; margin-bottom: 25px;
+        }
+        .stat-card {
+            background: var(--card); border: 1px solid var(--border);
+            border-radius: 10px; padding: 20px;
+        }
+        .stat-label { color: var(--text-dim); font-size: 0.85rem; text-transform: uppercase; }
+        .stat-value { font-size: 1.5rem; font-weight: bold; margin-top: 5px; }
+        .stat-value.green { color: var(--green); }
+        .stat-value.yellow { color: var(--yellow); }
+        .stat-value.blue { color: var(--blue); }
+        .filters {
+            display: flex; gap: 15px; margin-bottom: 20px;
+            flex-wrap: wrap; align-items: center;
+        }
+        .filters select, .filters input {
+            background: var(--card); border: 1px solid var(--border);
+            color: var(--text); padding: 8px 12px; border-radius: 6px; font-size: 0.9rem;
+        }
+        .btn {
+            background: var(--blue); color: white; border: none;
+            padding: 8px 20px; border-radius: 6px; cursor: pointer;
+            font-size: 0.9rem; transition: opacity 0.2s;
+        }
+        .btn:hover { opacity: 0.8; }
+        .opportunities-table {
+            width: 100%; border-collapse: collapse;
+            background: var(--card); border: 1px solid var(--border);
+            border-radius: 10px; overflow: hidden;
+        }
+        .opportunities-table th {
+            background: rgba(59, 130, 246, 0.1); color: var(--blue);
+            padding: 15px; text-align: left; font-size: 0.85rem;
+            text-transform: uppercase; letter-spacing: 0.5px;
+        }
+        .opportunities-table td {
+            padding: 12px 15px; border-bottom: 1px solid var(--border); font-size: 0.9rem;
+        }
+        .opportunities-table tr:hover { background: rgba(255,255,255,0.02); }
+        .profit-positive { color: var(--green); font-weight: bold; }
+        .profit-negative { color: var(--red); }
+        .confidence-high { color: var(--green); }
+        .confidence-med { color: var(--yellow); }
+        .confidence-low { color: var(--red); }
+        .badge {
+            display: inline-block; padding: 2px 8px;
+            border-radius: 4px; font-size: 0.75rem; font-weight: bold;
+        }
+        .badge-cross { background: rgba(16, 185, 129, 0.15); color: var(--green); }
+        .badge-tri { background: rgba(139, 92, 246, 0.15); color: var(--purple); }
+        .badge-multi { background: rgba(245, 158, 11, 0.15); color: var(--yellow); }
+        .exchange-tag { display: inline-flex; align-items: center; gap: 5px; }
+        .dot { width: 6px; height: 6px; border-radius: 50%; }
+        .dot.online { background: var(--green); }
+        .dot.offline { background: var(--red); }
+        .dot.warning { background: var(--yellow); }
+        .timestamp { color: var(--text-dim); font-size: 0.8rem; }
+        .empty-state { text-align: center; padding: 60px; color: var(--text-dim); }
+        .loading {
+            display: inline-block; width: 20px; height: 20px;
+            border: 2px solid var(--border); border-top-color: var(--blue);
+            border-radius: 50%; animation: spin 1s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .exchanges-bar { display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; }
+        .exchange-chip {
+            background: var(--card); border: 1px solid var(--border);
+            padding: 6px 12px; border-radius: 20px; font-size: 0.8rem;
+            display: flex; align-items: center; gap: 6px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Crypto Arbitrage Scanner</h1>
+            <div class="status-indicator">
+                <span class="pulse"></span>
+                <span id="scan-status">Scanning...</span>
+                <span id="last-scan" class="timestamp"></span>
+            </div>
+        </header>
+
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-label">Live Opportunities</div>
+                <div class="stat-value blue" id="stat-count">0</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Best Spread</div>
+                <div class="stat-value green" id="stat-best-spread">0.00%</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Avg Net Profit</div>
+                <div class="stat-value yellow" id="stat-avg-profit">$0.00</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Active Exchanges</div>
+                <div class="stat-value" id="stat-exchanges">0/0</div>
+            </div>
+        </div>
+
+        <div class="exchanges-bar" id="exchanges-bar"></div>
+
+        <div class="filters">
+            <select id="filter-type">
+                <option value="all">All Types</option>
+                <option value="cross_exchange">Cross-Exchange</option>
+                <option value="triangular">Triangular</option>
+                <option value="multi_hop">Multi-Hop</option>
+            </select>
+            <select id="filter-base">
+                <option value="all">All Bases</option>
+                <option value="USDT">USDT</option>
+                <option value="BTC">BTC</option>
+                <option value="ETH">ETH</option>
+            </select>
+            <input type="number" id="filter-min-profit" placeholder="Min Profit %" step="0.01" value="0.1">
+            <button class="btn" onclick="refreshData()">Refresh</button>
+            <button class="btn" onclick="exportCSV()">Export CSV</button>
+        </div>
+
+        <table class="opportunities-table">
+            <thead>
+                <tr>
+                    <th>Type</th>
+                    <th>Pair</th>
+                    <th>Buy @</th>
+                    <th>Sell @</th>
+                    <th>Spread</th>
+                    <th>Net Profit</th>
+                    <th>ROI</th>
+                    <th>Capital</th>
+                    <th>Confidence</th>
+                    <th>Time</th>
+                </tr>
+            </thead>
+            <tbody id="opportunities-body">
+                <tr>
+                    <td colspan="10" class="empty-state">
+                        <div class="loading"></div>
+                        <p>Scanning markets for opportunities...</p>
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <script>
+        let allOpportunities = [];
+        let autoRefreshInterval;
+
+        async function fetchOpportunities() {
+            try {
+                const response = await fetch("/api/opportunities");
+                const data = await response.json();
+                allOpportunities = data.opportunities;
+                updateDisplay();
+                updateStats(data);
+            } catch (e) {
+                console.error("Fetch error:", e);
+            }
+        }
+
+        async function fetchStatus() {
+            try {
+                const response = await fetch("/api/status");
+                const data = await response.json();
+                updateExchanges(data.exchanges);
+                document.getElementById("stat-exchanges").textContent =
+                    `${data.exchanges.filter(e => e.connected).length}/${data.exchanges.length}`;
+            } catch (e) {
+                console.error("Status fetch error:", e);
+            }
+        }
+
+        function updateDisplay() {
+            const typeFilter = document.getElementById("filter-type").value;
+            const baseFilter = document.getElementById("filter-base").value;
+            const minProfit = parseFloat(document.getElementById("filter-min-profit").value) || 0;
+
+            let filtered = allOpportunities.filter(opp => {
+                if (typeFilter !== "all" && opp.type !== typeFilter) return false;
+                if (baseFilter !== "all" && !opp.symbol.includes(baseFilter)) return false;
+                if (opp.net_profit_pct < minProfit) return false;
+                return true;
+            });
+
+            const tbody = document.getElementById("opportunities-body");
+
+            if (filtered.length === 0) {
+                tbody.innerHTML = `
+                    <tr><td colspan="10" class="empty-state">
+                        No opportunities match current filters
+                    </td></tr>`;
+                return;
+            }
+
+            tbody.innerHTML = filtered.map(opp => {
+                const typeClass = opp.type === "cross_exchange" ? "badge-cross" :
+                                  opp.type === "triangular" ? "badge-tri" : "badge-multi";
+                const typeLabel = opp.type.replace("_", " ");
+
+                const confClass = opp.confidence_score >= 80 ? "confidence-high" :
+                                  opp.confidence_score >= 50 ? "confidence-med" : "confidence-low";
+
+                const timeAgo = Math.floor((new Date() - new Date(opp.timestamp)) / 1000);
+                const timeStr = timeAgo < 60 ? `${timeAgo}s ago` :
+                               timeAgo < 3600 ? `${Math.floor(timeAgo/60)}m ago` : "Old";
+
+                return `
+                    <tr>
+                        <td><span class="badge ${typeClass}">${typeLabel}</span></td>
+                        <td><strong>${opp.symbol}</strong></td>
+                        <td class="exchange-tag">
+                            <span class="dot online"></span>${opp.buy_exchange}
+                        </td>
+                        <td class="exchange-tag">
+                            <span class="dot online"></span>${opp.sell_exchange}
+                        </td>
+                        <td class="profit-positive">${opp.spread_pct.toFixed(3)}%</td>
+                        <td class="profit-positive">$${opp.net_profit_usd.toFixed(2)}</td>
+                        <td class="profit-positive">${opp.net_profit_pct.toFixed(3)}%</td>
+                        <td>$${(opp.required_capital/1000).toFixed(1)}k</td>
+                        <td class="${confClass}">${opp.confidence_score.toFixed(0)}%</td>
+                        <td class="timestamp">${timeStr}</td>
+                    </tr>
+                `;
+            }).join("");
+        }
+
+        function updateStats(data) {
+            document.getElementById("stat-count").textContent = data.count;
+            if (data.opportunities.length > 0) {
+                const best = data.opportunities.reduce((a, b) => a.spread_pct > b.spread_pct ? a : b);
+                document.getElementById("stat-best-spread").textContent = best.spread_pct.toFixed(3) + "%";
+                const avgProfit = data.opportunities.reduce((a, b) => a + b.net_profit_usd, 0) / data.opportunities.length;
+                document.getElementById("stat-avg-profit").textContent = "$" + avgProfit.toFixed(2);
+            }
+            document.getElementById("last-scan").textContent = new Date().toLocaleTimeString();
+        }
+
+        function updateExchanges(exchanges) {
+            const bar = document.getElementById("exchanges-bar");
+            bar.innerHTML = exchanges.map(ex => {
+                const dotClass = ex.connected ? (ex.latency_ms > 100 ? "warning" : "online") : "offline";
+                const latency = ex.connected ? `${ex.latency_ms.toFixed(0)}ms` : "Offline";
+                return `
+                    <div class="exchange-chip">
+                        <span class="dot ${dotClass}"></span>
+                        ${ex.name} <span style="color:#9ca3af">${latency}</span>
+                    </div>
+                `;
+            }).join("");
+        }
+
+        function refreshData() {
+            fetchOpportunities();
+            fetchStatus();
+        }
+
+        function exportCSV() {
+            if (allOpportunities.length === 0) return;
+            const headers = ["Type", "Symbol", "BuyExchange", "SellExchange", "BuyPrice", "SellPrice",
+                           "SpreadPct", "NetProfitPct", "NetProfitUSD", "RequiredCapital", "Confidence", "Timestamp"];
+            const rows = allOpportunities.map(opp => [
+                opp.type, opp.symbol, opp.buy_exchange, opp.sell_exchange,
+                opp.buy_price, opp.sell_price, opp.spread_pct, opp.net_profit_pct,
+                opp.net_profit_usd, opp.required_capital, opp.confidence_score, opp.timestamp
+            ].join(","));
+            const csv = [headers.join(","), ...rows].join("\n");
+            const blob = new Blob([csv], { type: "text/csv" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = `arbitrage_${new Date().toISOString().slice(0,10)}.csv`;
+            a.click();
+        }
+
+        autoRefreshInterval = setInterval(refreshData, 3000);
+        refreshData();
+
+        document.getElementById("filter-type").addEventListener("change", updateDisplay);
+        document.getElementById("filter-base").addEventListener("change", updateDisplay);
+        document.getElementById("filter-min-profit").addEventListener("input", updateDisplay);
+    </script>
+</body>
+</html>

@@ -1,0 +1,97 @@
+# Crypto Arbitrage Scanner Configuration
+
+exchanges:
+  - name: binance
+    enabled: true
+    sandbox: false
+    rate_limit: 1200
+    timeout: 10
+    markets: []
+
+  - name: bybit
+    enabled: true
+    sandbox: false
+    rate_limit: 120
+    timeout: 10
+
+  - name: okx
+    enabled: true
+    sandbox: false
+    rate_limit: 100
+    timeout: 10
+
+  - name: kucoin
+    enabled: true
+    sandbox: false
+    rate_limit: 100
+    timeout: 10
+
+  - name: kraken
+    enabled: true
+    sandbox: false
+    rate_limit: 60
+    timeout: 15
+
+  - name: coinbase
+    enabled: true
+    sandbox: false
+    rate_limit: 100
+    timeout: 10
+
+  - name: bitget
+    enabled: true
+    sandbox: false
+    rate_limit: 100
+    timeout: 10
+
+  - name: gateio
+    enabled: true
+    sandbox: false
+    rate_limit: 100
+    timeout: 10
+
+  - name: mexc
+    enabled: true
+    sandbox: false
+    rate_limit: 100
+    timeout: 10
+
+filters:
+  base_currencies:
+    - USDT
+    - BTC
+    - ETH
+  min_profit_pct: 0.005
+  min_trade_volume_usd: 5000.0
+  max_slippage_pct: 0.5
+  supported_exchanges: []
+  market_type: spot
+  blockchains: []
+  max_spread_pct: 5.0
+  min_liquidity_depth: 100.0
+
+alerts:
+  enabled: true
+  min_profit_pct: 0.2
+  desktop_enabled: true
+  telegram_enabled: false
+  telegram_bot_token: ""
+  telegram_chat_id: ""
+  discord_enabled: false
+  discord_webhook_url: ""
+  email_enabled: false
+  email_smtp_host: smtp.gmail.com
+  email_smtp_port: 587
+  email_username: ""
+  email_password: ""
+  email_recipients: []
+  webhook_enabled: false
+  webhook_url: ""
+
+scanner:
+  scan_interval_seconds: 2.0
+  max_concurrent_requests: 50
+  orderbook_depth: 20
+  cache_ttl_seconds: 1.0
+  paper_trading: true
+  log_level: INFO
