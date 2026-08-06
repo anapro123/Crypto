@@ -1,0 +1,541 @@
+diff --git a/core/arbitrage_detector.py b/core/arbitrage_detector.py
+index 93334c9..e535d1a 100644
+--- a/core/arbitrage_detector.py
++++ b/core/arbitrage_detector.py
+@@ -6,16 +6,16 @@ Arbitrage Detection Engine:
+ """
+ 
+ import logging
+-from typing import List, Dict, Optional, Tuple
+ from dataclasses import dataclass, field
+ from datetime import datetime
++from typing import Dict, List, Tuple
+ 
+-import numpy as np
+ import networkx as nx
++import numpy as np
+ 
+-from core.market_data import NormalizedOrderBook, MarketDataManager
+-from fees.fee_calculator import FeeCalculator
+ from config.settings import settings
++from core.market_data import MarketDataManager, NormalizedOrderBook
++from fees.fee_calculator import FeeCalculator
+ 
+ logger = logging.getLogger(__name__)
+ 
+@@ -58,15 +58,75 @@ class ArbitrageDetector:
+         self.fee_calc = fee_calculator
+         self._last_opportunities: Dict[str, ArbitrageOpportunity] = {}
+ 
+-    async def scan_cross_exchange(self, order_books: Dict[str, Dict[str, NormalizedOrderBook]]) -> List[ArbitrageOpportunity]:
+-        opportunities = []
++    @staticmethod
++    def _top_of_book_notional(order_book: NormalizedOrderBook, side: str, levels: int = 5) -> float:
++        """Estimate quote-currency notional at the top of the book."""
++        book = order_book.asks if side == "ask" else order_book.bids
++        total = 0.0
++        for level in book[:levels]:
++            if level.price > 0 and level.amount > 0:
++                total += level.price * level.amount
++        return total
++
++    def _estimate_liquidity(
++        self,
++        order_book: NormalizedOrderBook,
++        side: str,
++        reference_price: float,
++        tolerance_pct: float = 0.25,
++        levels: int = 5,
++    ) -> float:
++        """
++        Try a tight price window first; if that returns zero, fall back to
++        the top-of-book notional to avoid treating a valid book as empty.
++        """
++        liquidity = order_book.get_liquidity_at_price(reference_price, side, tolerance_pct)
++        if liquidity <= 0:
++            liquidity = self._top_of_book_notional(order_book, side, levels)
++        return liquidity
++
++    def _path_liquidity(
++        self,
++        symbols: Dict[str, NormalizedOrderBook],
++        graph: nx.DiGraph,
++        path: List[str],
++    ) -> float:
++        """Estimate the minimum notional liquidity across all legs of a route."""
++        route_liquidity = None
++
++        for i in range(len(path) - 1):
++            from_curr = path[i]
++            to_curr = path[i + 1]
++            edge_data = graph[from_curr][to_curr]
++            symbol = edge_data["symbol"]
++            ob = symbols.get(symbol)
++            if not ob:
++                continue
++
++            reference_price = ob.best_ask if edge_data["side"] == "buy" else ob.best_bid
++            if not reference_price:
++                continue
++
++            leg_liquidity = self._estimate_liquidity(
++                ob,
++                edge_data["side"],
++                reference_price,
++                tolerance_pct=0.25,
++            )
++            if leg_liquidity > 0:
++                route_liquidity = leg_liquidity if route_liquidity is None else min(route_liquidity, leg_liquidity)
++
++        return route_liquidity or 0.0
++
++    async def scan_cross_exchange(
++        self, order_books: Dict[str, Dict[str, NormalizedOrderBook]]
++    ) -> List[ArbitrageOpportunity]:
++        opportunities: List[ArbitrageOpportunity] = []
+         by_symbol: Dict[str, Dict[str, NormalizedOrderBook]] = {}
+ 
+         for exchange, symbols in order_books.items():
+             for symbol, ob in symbols.items():
+-                if symbol not in by_symbol:
+-                    by_symbol[symbol] = {}
+-                by_symbol[symbol][exchange] = ob
++                by_symbol.setdefault(symbol, {})[exchange] = ob
+ 
+         for symbol, exchange_obs in by_symbol.items():
+             if len(exchange_obs) < 2:
+@@ -92,19 +152,24 @@ class ArbitrageDetector:
+             if spread_pct < settings.filters.min_profit_pct:
+                 continue
+ 
++            buy_ob = exchange_obs[ask_exchange]
++            sell_ob = exchange_obs[bid_exchange]
++            buy_liquidity = self._estimate_liquidity(buy_ob, "ask", best_ask)
++            sell_liquidity = self._estimate_liquidity(sell_ob, "bid", best_bid)
++            max_trade = min(buy_liquidity, sell_liquidity)
++
+             fees = self.fee_calc.calculate_cross_exchange_fees(
+-                ask_exchange, bid_exchange, symbol, best_ask, best_bid
++                ask_exchange,
++                bid_exchange,
++                symbol,
++                best_ask,
++                best_bid,
++                available_liquidity=max_trade,
+             )
+             net_profit_pct = spread_pct - fees["total_fee_pct"] - fees["slippage_pct"]
+             if net_profit_pct <= 0:
+                 continue
+ 
+-            buy_ob = exchange_obs[ask_exchange]
+-            sell_ob = exchange_obs[bid_exchange]
+-            buy_liquidity = buy_ob.get_liquidity_at_price(best_ask, "ask", 0.05)
+-            sell_liquidity = sell_ob.get_liquidity_at_price(best_bid, "bid", 0.05)
+-            max_trade = min(buy_liquidity, sell_liquidity)
+-
+             if max_trade < settings.filters.min_liquidity_depth:
+                 continue
+ 
+@@ -115,26 +180,34 @@ class ArbitrageDetector:
+             )
+ 
+             opp = ArbitrageOpportunity(
+-                type="cross_exchange", symbol=symbol,
+-                buy_exchange=ask_exchange, sell_exchange=bid_exchange,
+-                buy_price=best_ask, sell_price=best_bid,
+-                spread_pct=spread_pct, gross_profit_pct=spread_pct,
++                type="cross_exchange",
++                symbol=symbol,
++                buy_exchange=ask_exchange,
++                sell_exchange=bid_exchange,
++                buy_price=best_ask,
++                sell_price=best_bid,
++                spread_pct=spread_pct,
++                gross_profit_pct=spread_pct,
+                 trading_fees_pct=fees["trading_fee_pct"],
+                 withdrawal_fee_usd=fees["withdrawal_fee_usd"],
+                 network_fee_usd=fees["network_fee_usd"],
+                 slippage_pct=fees["slippage_pct"],
+-                net_profit_pct=net_profit_pct, net_profit_usd=net_profit_usd,
++                net_profit_pct=net_profit_pct,
++                net_profit_usd=net_profit_usd,
+                 required_capital=required_capital,
+-                liquidity_score=min(buy_liquidity, sell_liquidity) / 10000,
++                liquidity_score=min(buy_liquidity, sell_liquidity) / 10000 if max_trade > 0 else 0.0,
+                 confidence_score=confidence,
+-                buy_depth=buy_liquidity, sell_depth=sell_liquidity
++                buy_depth=buy_liquidity,
++                sell_depth=sell_liquidity,
+             )
+             opportunities.append(opp)
+ 
+         return opportunities
+ 
+-    async def scan_triangular(self, order_books: Dict[str, Dict[str, NormalizedOrderBook]]) -> List[ArbitrageOpportunity]:
+-        opportunities = []
++    async def scan_triangular(
++        self, order_books: Dict[str, Dict[str, NormalizedOrderBook]]
++    ) -> List[ArbitrageOpportunity]:
++        opportunities: List[ArbitrageOpportunity] = []
+ 
+         for exchange, symbols in order_books.items():
+             graph = nx.DiGraph()
+@@ -149,59 +222,80 @@ class ArbitrageDetector:
+             for start_currency in settings.filters.base_currencies:
+                 if start_currency not in graph:
+                     continue
++
+                 for neighbor1 in graph.neighbors(start_currency):
+                     for neighbor2 in graph.neighbors(neighbor1):
+-                        if graph.has_edge(neighbor2, start_currency):
+-                            cycle = [start_currency, neighbor1, neighbor2, start_currency]
+-                            amount = 1.0
+-                            path_details = []
+-                            total_slippage = 0.0
+-
+-                            for i in range(len(cycle) - 1):
+-                                from_curr = cycle[i]
+-                                to_curr = cycle[i + 1]
+-                                edge_data = graph[from_curr][to_curr]
+-                                rate = edge_data["rate"]
+-                                symbol = edge_data["symbol"]
+-
+-                                if symbol in symbols:
+-                                    ob = symbols[symbol]
+-                                    depth = ob.get_liquidity_at_price(
+-                                        ob.best_ask if edge_data["side"] == "buy" else ob.best_bid,
+-                                        edge_data["side"], 0.1
++                        if not graph.has_edge(neighbor2, start_currency):
++                            continue
++
++                        cycle = [start_currency, neighbor1, neighbor2, start_currency]
++                        amount = 1.0
++                        total_slippage = 0.0
++                        route_liquidity = None
++
++                        for i in range(len(cycle) - 1):
++                            from_curr = cycle[i]
++                            to_curr = cycle[i + 1]
++                            edge_data = graph[from_curr][to_curr]
++                            rate = edge_data["rate"]
++                            symbol = edge_data["symbol"]
++                            ob = symbols.get(symbol)
++
++                            if ob:
++                                reference_price = ob.best_ask if edge_data["side"] == "buy" else ob.best_bid
++                                if reference_price:
++                                    leg_liquidity = self._estimate_liquidity(
++                                        ob,
++                                        edge_data["side"],
++                                        reference_price,
++                                        tolerance_pct=0.25,
++                                    )
++                                    if leg_liquidity > 0:
++                                        route_liquidity = leg_liquidity if route_liquidity is None else min(route_liquidity, leg_liquidity)
++                                    total_slippage += self.fee_calc.estimate_slippage(
++                                        symbol,
++                                        amount,
++                                        leg_liquidity,
+                                     )
+-                                    slip = self.fee_calc.estimate_slippage(symbol, amount, depth)
+-                                    total_slippage += slip
+-
+-                                amount *= rate
+-                                path_details.append({"from": from_curr, "to": to_curr, "symbol": symbol, "rate": rate})
+-
+-                            profit_pct = (amount - 1.0) * 100
+-                            trading_fees = self.fee_calc.get_trading_fee(exchange) * 3
+-                            net_profit_pct = profit_pct - trading_fees - total_slippage
+-
+-                            if net_profit_pct > settings.filters.min_profit_pct:
+-                                opp = ArbitrageOpportunity(
+-                                    id=f"tri_{exchange}_{'_'.join(cycle)}_{int(datetime.utcnow().timestamp())}",
+-                                    type="triangular",
+-                                    symbol=" -> ".join(cycle),
+-                                    buy_exchange=exchange, sell_exchange=exchange,
+-                                    buy_price=1.0, sell_price=amount,
+-                                    spread_pct=profit_pct, gross_profit_pct=profit_pct,
+-                                    trading_fees_pct=trading_fees,
+-                                    slippage_pct=total_slippage,
+-                                    net_profit_pct=net_profit_pct,
+-                                    net_profit_usd=1000 * (net_profit_pct / 100),
+-                                    required_capital=1000.0,
+-                                    confidence_score=max(0, 100 - total_slippage * 10),
+-                                    timestamp=datetime.utcnow()
+-                                )
+-                                opportunities.append(opp)
++
++                            amount *= rate
++
++                        profit_pct = (amount - 1.0) * 100
++                        trading_fees = self.fee_calc.get_trading_fee(exchange) * 3
++                        net_profit_pct = profit_pct - trading_fees - total_slippage
++                        route_liquidity = route_liquidity or 0.0
++
++                        if net_profit_pct > settings.filters.min_profit_pct and route_liquidity >= settings.filters.min_liquidity_depth:
++                            required_capital = min(max(route_liquidity, 100.0), 1000.0)
++                            opp = ArbitrageOpportunity(
++                                id=f"tri_{exchange}_{'_'.join(cycle)}_{int(datetime.utcnow().timestamp())}",
++                                type="triangular",
++                                symbol=" -> ".join(cycle),
++                                buy_exchange=exchange,
++                                sell_exchange=exchange,
++                                buy_price=1.0,
++                                sell_price=amount,
++                                spread_pct=profit_pct,
++                                gross_profit_pct=profit_pct,
++                                trading_fees_pct=trading_fees,
++                                slippage_pct=total_slippage,
++                                net_profit_pct=net_profit_pct,
++                                net_profit_usd=required_capital * (net_profit_pct / 100),
++                                required_capital=required_capital,
++                                liquidity_score=min(route_liquidity / 10000, 1.0) if route_liquidity > 0 else 0.0,
++                                confidence_score=min(100.0, 65.0 + min(profit_pct * 5, 20) + min(route_liquidity / 10000, 10)),
++                                buy_depth=route_liquidity,
++                                sell_depth=route_liquidity,
++                                timestamp=datetime.utcnow(),
++                            )
++                            opportunities.append(opp)
+ 
+         return opportunities
+ 
+-    async def scan_multi_hop(self, order_books: Dict[str, Dict[str, NormalizedOrderBook]], max_hops: int = 3) -> List[ArbitrageOpportunity]:
+-        opportunities = []
++    async def scan_multi_hop(
++        self, order_books: Dict[str, Dict[str, NormalizedOrderBook]], max_hops: int = 3
++    ) -> List[ArbitrageOpportunity]:
++        opportunities: List[ArbitrageOpportunity] = []
+ 
+         for exchange, symbols in order_books.items():
+             graph = nx.DiGraph()
+@@ -210,48 +304,82 @@ class ArbitrageDetector:
+                 if not ob.best_bid or not ob.best_ask:
+                     continue
+                 base, quote = symbol.split("/")
+-                weight_buy = -np.log(1.0 / ob.best_ask)
+-                graph.add_edge(quote, base, weight=weight_buy, symbol=symbol, rate=1.0 / ob.best_ask)
+-                weight_sell = -np.log(ob.best_bid)
+-                graph.add_edge(base, quote, weight=weight_sell, symbol=symbol, rate=ob.best_bid)
+-
+-            try:
+-                for source in settings.filters.base_currencies:
+-                    if source not in graph:
++                graph.add_edge(quote, base, weight=-np.log(1.0 / ob.best_ask), symbol=symbol, side="buy", rate=1.0 / ob.best_ask)
++                graph.add_edge(base, quote, weight=-np.log(ob.best_bid), symbol=symbol, side="sell", rate=ob.best_bid)
++
++            for source in settings.filters.base_currencies:
++                if source not in graph:
++                    continue
++
++                try:
++                    path = nx.bellman_ford_path(graph, source, source, weight="weight")
++                    if len(path) <= 2 or len(path) > max_hops + 1:
+                         continue
+-                    try:
+-                        path = nx.bellman_ford_path(graph, source, source, weight="weight")
+-                        if len(path) > 2 and len(path) <= max_hops + 1:
+-                            amount = 1.0
+-                            for i in range(len(path) - 1):
+-                                edge = graph[path[i]][path[i + 1]]
+-                                amount *= edge["rate"]
+-
+-                            profit_pct = (amount - 1.0) * 100
+-                            if profit_pct > settings.filters.min_profit_pct:
+-                                opp = ArbitrageOpportunity(
+-                                    id=f"multi_{exchange}_{'_'.join(path)}",
+-                                    type="multi_hop",
+-                                    symbol=" -> ".join(path),
+-                                    buy_exchange=exchange, sell_exchange=exchange,
+-                                    buy_price=1.0, sell_price=amount,
+-                                    spread_pct=profit_pct,
+-                                    net_profit_pct=profit_pct * 0.95,
+-                                    confidence_score=70.0,
+-                                    timestamp=datetime.utcnow()
++
++                    amount = 1.0
++                    route_liquidity = None
++                    for i in range(len(path) - 1):
++                        edge = graph[path[i]][path[i + 1]]
++                        symbol = edge["symbol"]
++                        ob = symbols.get(symbol)
++
++                        if ob:
++                            reference_price = ob.best_ask if edge["side"] == "buy" else ob.best_bid
++                            if reference_price:
++                                leg_liquidity = self._estimate_liquidity(
++                                    ob,
++                                    edge["side"],
++                                    reference_price,
++                                    tolerance_pct=0.25,
+                                 )
+-                                opportunities.append(opp)
+-                    except nx.NetworkXNoPath:
+-                        continue
+-            except Exception as e:
+-                logger.debug(f"Multi-hop scan error on {exchange}: {e}")
++                                if leg_liquidity > 0:
++                                    route_liquidity = leg_liquidity if route_liquidity is None else min(route_liquidity, leg_liquidity)
++
++                        amount *= edge["rate"]
++
++                    profit_pct = (amount - 1.0) * 100
++                    route_liquidity = route_liquidity or 0.0
++
++                    if profit_pct > settings.filters.min_profit_pct and route_liquidity >= settings.filters.min_liquidity_depth:
++                        required_capital = min(max(route_liquidity, 100.0), 1000.0)
++                        opp = ArbitrageOpportunity(
++                            id=f"multi_{exchange}_{'_'.join(path)}",
++                            type="multi_hop",
++                            symbol=" -> ".join(path),
++                            buy_exchange=exchange,
++                            sell_exchange=exchange,
++                            buy_price=1.0,
++                            sell_price=amount,
++                            spread_pct=profit_pct,
++                            gross_profit_pct=profit_pct,
++                            net_profit_pct=profit_pct * 0.95,
++                            net_profit_usd=required_capital * (profit_pct * 0.95 / 100),
++                            required_capital=required_capital,
++                            liquidity_score=min(route_liquidity / 10000, 1.0) if route_liquidity > 0 else 0.0,
++                            confidence_score=min(100.0, 60.0 + min(profit_pct * 5, 20) + min(route_liquidity / 10000, 10)),
++                            buy_depth=route_liquidity,
++                            sell_depth=route_liquidity,
++                            timestamp=datetime.utcnow(),
++                        )
++                        opportunities.append(opp)
++                except nx.NetworkXNoPath:
++                    continue
++                except Exception as e:
++                    logger.debug(f"Multi-hop scan error on {exchange}: {e}")
+ 
+         return opportunities
+ 
+-    def _calculate_confidence(self, spread_pct: float, buy_depth: float, sell_depth: float,
+-                              buy_ex: str, sell_ex: str) -> float:
++    def _calculate_confidence(
++        self,
++        spread_pct: float,
++        buy_depth: float,
++        sell_depth: float,
++        buy_ex: str,
++        sell_ex: str,
++    ) -> float:
+         score = 50.0
+         score += min(spread_pct * 20, 20)
++
+         min_depth = min(buy_depth, sell_depth)
+         if min_depth > 50000:
+             score += 15
+@@ -259,12 +387,16 @@ class ArbitrageDetector:
+             score += 10
+         elif min_depth > 5000:
+             score += 5
++
+         tier1 = {"binance", "coinbase", "kraken"}
+         if buy_ex in tier1 and sell_ex in tier1:
+             score += 10
++
+         return min(score, 100.0)
+ 
+-    def detect_changes(self, new_opportunities: List[ArbitrageOpportunity]) -> Tuple[List[ArbitrageOpportunity], List[ArbitrageOpportunity], List[ArbitrageOpportunity]]:
++    def detect_changes(
++        self, new_opportunities: List[ArbitrageOpportunity]
++    ) -> Tuple[List[ArbitrageOpportunity], List[ArbitrageOpportunity], List[ArbitrageOpportunity]]:
+         new_dict = {opp.id: opp for opp in new_opportunities}
+         old_dict = self._last_opportunities
+ 
+diff --git a/fees/fee_calculator.py b/fees/fee_calculator.py
+index cdafd00..0669a09 100644
+--- a/fees/fee_calculator.py
++++ b/fees/fee_calculator.py
+@@ -46,7 +46,8 @@ class FeeCalculator:
+         return ex_fees.get("withdrawal", 1.0)
+ 
+     def calculate_cross_exchange_fees(self, buy_exchange: str, sell_exchange: str,
+-                                       symbol: str, buy_price: float, sell_price: float) -> Dict:
++                                       symbol: str, buy_price: float, sell_price: float,
++                                       available_liquidity: float = 0.0) -> Dict:
+         base, quote = symbol.split("/")
+         buy_fee_pct = self.get_trading_fee(buy_exchange, "taker")
+         sell_fee_pct = self.get_trading_fee(sell_exchange, "taker")
+@@ -57,7 +58,7 @@ class FeeCalculator:
+         deposit_fee = 0.0
+ 
+         assumed_trade_size = 10000.0
+-        slippage = self.estimate_slippage(symbol, assumed_trade_size)
++        slippage = self.estimate_slippage(symbol, assumed_trade_size, available_liquidity)
+ 
+         trade_value = assumed_trade_size
+         fixed_fee_pct = ((withdrawal_fee + network_fee + deposit_fee) / trade_value) * 100
+@@ -90,8 +91,8 @@ class FeeCalculator:
+             else:
+                 return 0.50
+ 
+-        ratio = trade_size_usd / available_liquidity
+-        slippage = ratio * 0.5
++        ratio = trade_size_usd / max(available_liquidity, 1.0)
++        slippage = ratio * 0.35
+         return min(slippage, 5.0)
+ 
+     def calculate_net_profit(self, gross_profit_pct: float, fees: Dict,
+diff --git a/main.py b/main.py
+index 557fc69..3086f1a 100644
+--- a/main.py
++++ b/main.py
+@@ -98,7 +98,6 @@ class ArbitrageScanner:
+ 
+             # Rank and filter
+             ranked = self.ranker.get_top_opportunities(all_opps, n=100)
+-            print("RANKED =", len(ranked))
+ 
+             # Detect changes
+             new, updated, disappeared = self.detector.detect_changes(ranked)
+diff --git a/ranking/opportunity_ranker.py b/ranking/opportunity_ranker.py
+index bdb0851..0cf6378 100644
+--- a/ranking/opportunity_ranker.py
++++ b/ranking/opportunity_ranker.py
+@@ -28,34 +28,25 @@ class OpportunityRanker:
+     def filter_opportunities(self, opportunities: List[ArbitrageOpportunity]) -> List[ArbitrageOpportunity]:
+         filtered = []
+         for opp in opportunities:
+-            print(
+-                "CHECK",
+-                opp.net_profit_pct,
+-                opp.slippage_pct,
+-                opp.required_capital,
+-                min(opp.buy_depth, opp.sell_depth),
+-            )
+-            print("if opp.net_profit_pct < settings.filters.min_profit_pct:")
+             if opp.net_profit_pct < settings.filters.min_profit_pct:
+-                print("REJECT: PROFIT", opp.net_profit_pct, settings.filters.min_profit_pct)
+                 continue
+-            print("if opp.slippage_pct > settings.filters.max_slippage_pct:")
++
+             if opp.slippage_pct > settings.filters.max_slippage_pct:
+-                print("REJECT: SLIPPAGE", opp.slippage_pct, settings.filters.max_slippage_pct)
+                 continue
+-            print("if opp.required_capital < settings.filters.min_trade_volume_usd:")
++
+             if opp.required_capital < settings.filters.min_trade_volume_usd:
+-                print("REJECT: CAPITAL", opp.required_capital, settings.filters.min_trade_volume_usd)
+                 continue
+-            min_depth = min(opp.buy_depth, opp.sell_depth)
+-            print("BUY_DEPTH =", opp.buy_depth, "SELL_DEPTH =", opp.sell_depth, "MIN_DEPTH =", min_depth)
+-            if False and min_depth < settings.filters.min_liquidity_depth:
+-                print("FILTERED"); print("FILTERED"); continue
++
++            min_depth = min(opp.buy_depth or 0.0, opp.sell_depth or 0.0)
++            if min_depth < settings.filters.min_liquidity_depth:
++                continue
++
+             if settings.filters.supported_exchanges:
+                 if opp.buy_exchange not in settings.filters.supported_exchanges:
+-                    print("FILTERED"); print("FILTERED"); continue
++                    continue
+                 if opp.sell_exchange not in settings.filters.supported_exchanges:
+-                    print("FILTERED"); print("FILTERED"); continue
++                    continue
++
+             filtered.append(opp)
+         return filtered
+ 
